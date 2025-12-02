@@ -1,0 +1,47 @@
+# -------------------------
+# 1. SECURITY (Critical)
+# -------------------------
+# Never commit secrets, API keys, or passwords
+.env
+.env.local
+.env.*.local
+
+# -------------------------
+# 2. PYTHON INTERNALS
+# -------------------------
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -------------------------
+# 3. VIRTUAL ENVIRONMENTS
+# -------------------------
+# Ignore the actual library installation folders
+venv/
+env/
+.venv/
+.env/
+
+# -------------------------
+# 4. OS & SYSTEM FILES
+# -------------------------
+# Mac system files
+.DS_Store
+# Windows system files
+Thumbs.db
+ehthumbs.db
+
+# -------------------------
+# 5. IDE / EDITOR SETTINGS
+# -------------------------
+# Ignore VS Code specific local settings
+.vscode/
+# Ignore PyCharm / IntelliJ settings
+.idea/
+
+# -------------------------
+# 6. MEDIA / LARGE FILES (Optional)
+# -------------------------
+# If you don't want to track the demo video in Git:
+*.mp4
