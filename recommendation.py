@@ -6,27 +6,33 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # -----------------------------------------------------------
-# 0. SETUP: ENVIRONMENT & PATHS
+# 1. SETUP & AUTHENTICATION (The Fix)
 # -----------------------------------------------------------
 
-# 1. Load the .env file explicitly
-load_dotenv()
+current_file_path = Path(__file__).resolve()
+project_folder = current_file_path.parent
+env_path = project_folder / ".env"
 
-# 2. Fix Import Paths
-# This ensures Python can find 'course_list.py' even if you run this script from a different folder
-BASE_DIR = Path(__file__).resolve().parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
+# Load environment variables (Silent mode)
+load_dotenv(dotenv_path=env_path, override=True) 
 
-# Now we can safely import
+# Get & Clean Token
+raw_token = os.getenv("HF_TOKEN")
+if raw_token:
+    HF_TOKEN = raw_token.strip().replace('"', '').replace("'", "")
+else:
+    HF_TOKEN = None
+    # We only print errors, not success messages
+    print("❌ CRITICAL ERROR: HF_TOKEN is missing.")
+
+# Fix Import Path for course_list.py
+if str(project_folder) not in sys.path:
+    sys.path.append(str(project_folder))
+
 try:
     from course_list import course_list
 except ImportError:
-    raise ImportError(f"Could not find 'course_list.py' in {BASE_DIR}. Make sure the file exists.")
-
-# -----------------------------------------------------------
-# 1. CORE FUNCTION
-# -----------------------------------------------------------
+    course_list = []
 def run_recommendation(user_chat_history: str):
     """
     Takes user chat text and returns:
@@ -34,12 +40,11 @@ def run_recommendation(user_chat_history: str):
     - formatted chatbot message
     """
 
-    # -------- API TOKEN --------
-    HF_TOKEN = os.getenv("HF_TOKEN")
+    # 1. Safety Check
     if not HF_TOKEN:
-        raise ValueError("CRITICAL: HF_TOKEN not found. Please check your .env file.")
+        return None, "System Error: API Token is missing. Please check .env file."
 
-    # Using the specific Router URL and Model ID you provided
+    # 2. Setup API
     API_URL = "https://router.huggingface.co/v1/chat/completions"
     MODEL_ID = "Qwen/Qwen2.5-72B-Instruct"
 
@@ -48,7 +53,7 @@ def run_recommendation(user_chat_history: str):
         "Content-Type": "application/json"
     }
 
-    # -------- SYSTEM PROMPT --------
+    # 3. Create Prompts
     system_prompt = """You are an expert student advisor and psychological analyst. 
     Your job is to perform two tasks:
     1. Analyze a user's raw chat history to generate a structured `persona`.
@@ -70,7 +75,6 @@ def run_recommendation(user_chat_history: str):
     }
     """
 
-    # -------- USER PROMPT --------
     user_prompt = f"""
     <user_chat>
     {user_chat_history}
@@ -81,7 +85,6 @@ def run_recommendation(user_chat_history: str):
     </course_list>
     """
 
-    # -------- API PAYLOAD --------
     payload = {
         "model": MODEL_ID,
         "messages": [
@@ -93,43 +96,37 @@ def run_recommendation(user_chat_history: str):
         "stream": False
     }
 
-    # -------- API CALL (With Error Handling) --------
+    # 4. Call API
     try:
-        # Added timeout=30 to prevent hanging
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         
-        # Check for 401 (Auth) or 500 (Server) errors
+        # If this fails with 401, it will print the specific error reason
+        if response.status_code == 401:
+            print(f"❌ API AUTH ERROR: {response.text}")
+            return None, "Error: Authentication failed. Check API Key."
+            
         response.raise_for_status()
 
+        # 5. Parse Response
         content = response.json()["choices"][0]["message"]["content"]
 
-        # -------- JSON CLEANING --------
-        # Robust check: Only split if the model actually used markdown code blocks
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].strip()
         
-        # Parse String to Dict
         data = json.loads(content)
-
-        # -------- FORMAT HUMAN MESSAGE --------
         final_message = format_final_message(data)
 
         return data, final_message
 
-    except requests.exceptions.Timeout:
-        return None, "Error: The request timed out. Please try again."
-    except requests.exceptions.RequestException as e:
-        return None, f"API Error: {str(e)}"
-    except json.JSONDecodeError:
-        return None, "Error: The model did not return valid JSON. Please try again."
     except Exception as e:
-        return None, f"Unexpected Error: {str(e)}"
+        print(f"❌ EXECUTION ERROR: {str(e)}")
+        return None, f"An error occurred: {str(e)}"
 
 
 # -----------------------------------------------------------
-# 2. HELPER: FORMAT FINAL CHAT OUTPUT
+# 3. HELPER: FORMAT OUTPUT
 # -----------------------------------------------------------
 def format_final_message(api_response_data):
     try:
@@ -137,14 +134,10 @@ def format_final_message(api_response_data):
         reccs = api_response_data.get("recommendations", [])
 
         if not reccs:
-            return "I analyzed your chat, but I couldn't find specific recommendations. Could you share more details?"
+            return "I analyzed your chat, but I couldn't find specific recommendations."
 
-        # Safely get first item or default to generic string
-        feelings = persona.get("expressed_feelings", [])
-        feeling = feelings[0] if feelings else "concerned"
-        
-        challenges = persona.get("reported_challenges", [])
-        challenge = challenges[0] if challenges else "your workload"
+        feeling = persona.get("expressed_feelings", ["concerned"])[0]
+        challenge = persona.get("reported_challenges", ["workload"])[0]
 
         msg = [
             f"You seem to be feeling **{feeling}** and struggling with **{challenge}**.",
@@ -153,13 +146,10 @@ def format_final_message(api_response_data):
         ]
 
         for i, c in enumerate(reccs):
-            title = c.get('title', 'Unknown Course')
-            reason = c.get('reason', 'No reason provided')
-            msg.append(f"**{i+1}. {title}**")
-            msg.append(f"- **Why:** {reason}\n---")
+            msg.append(f"**{i+1}. {c.get('title', 'Course')}**")
+            msg.append(f"- **Why:** {c.get('reason', 'N/A')}\n---")
 
         return "\n".join(msg)
 
-    except Exception as e:
-        print(f"Formatting Error: {e}")
-        return "I found some courses for you, but had trouble formatting the message."
+    except Exception:
+        return "Error generating the final chat message."
